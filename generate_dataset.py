@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+# Note from stopachka: had to copy over
+# https://github.com/tensorflow/magenta/blob/master/magenta/models/melody_rnn/melody_rnn_model.py
+# to change min_bars
+
+# -----------------------------------------------------------------------------
+
 # Copyright 2016 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
