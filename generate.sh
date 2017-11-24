@@ -1,7 +1,7 @@
 melody_rnn_generate \
 --config=basic_rnn \
 --run_dir=/home/carnd/deep-dj/data/logdir/run1 \
---output_dir=/home/carnd/deep-dj/data/generated \
+--output_dir=/home/carnd/deep-dj/generated \
 --num_outputs=10 \
 --num_steps=128 \
 --hparams="batch_size=64,rnn_layer_sizes=[64,64]" \
