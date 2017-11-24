@@ -98,7 +98,7 @@ def get_pipeline(config, eval_ratio):
     quantizer = note_sequence_pipelines.Quantizer(
         steps_per_quarter=config.steps_per_quarter, name='Quantizer_' + mode)
     melody_extractor = melody_pipelines.MelodyExtractor(
-        min_bars=1, max_steps=512, min_unique_pitches=1,
+        min_bars=0, max_steps=512, min_unique_pitches=0,
         gap_bars=1.0, ignore_polyphonic_notes=False,
         name='MelodyExtractor_' + mode)
     encoder_pipeline = EncoderPipeline(config, name='EncoderPipeline_' + mode)
