@@ -5,4 +5,4 @@ melody_rnn_generate \
 --num_outputs=10 \
 --num_steps=128 \
 --hparams="batch_size=64,rnn_layer_sizes=[64,64]" \
---primer_melody="[60]"
+--primer_midi=/home/carnd/deep-dj/data/midi/Bpm98_E_TokyoZapp_pad1.mid
