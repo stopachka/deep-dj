@@ -1,10 +1,3 @@
-# -----------------------------------------------------------------------------
-# Note from stopachka: had to copy over
-# https://github.com/tensorflow/magenta/blob/master/magenta/models/melody_rnn/melody_rnn_model.py
-# to change min_bars
-
-# -----------------------------------------------------------------------------
-
 # Copyright 2016 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,20 +13,22 @@
 # limitations under the License.
 """Create a dataset of SequenceExamples from NoteSequence protos.
 
-This script will extract melodies from NoteSequence protos and save them to
-TensorFlow's SequenceExample protos for input to the melody RNN models.
+This script will extract polyphonic tracks from NoteSequence protos and save
+them to TensorFlow's SequenceExample protos for input to the polyphonic RNN
+models.
 """
 
 import os
 
 # internal imports
+
 import tensorflow as tf
-import magenta
 
-from magenta.models.melody_rnn import melody_rnn_config_flags
+from magenta.models.polyphony_rnn import polyphony_lib
+from magenta.models.polyphony_rnn import polyphony_model
 
+from magenta.music import encoder_decoder
 from magenta.pipelines import dag_pipeline
-from magenta.pipelines import melody_pipelines
 from magenta.pipelines import note_sequence_pipelines
 from magenta.pipelines import pipeline
 from magenta.pipelines import pipelines_common
@@ -54,48 +49,47 @@ tf.app.flags.DEFINE_string('log', 'INFO',
                            'DEBUG, INFO, WARN, ERROR, or FATAL.')
 
 
-class EncoderPipeline(pipeline.Pipeline):
-  """A Module that converts monophonic melodies to a model specific encoding."""
+class PolyphonicSequenceExtractor(pipeline.Pipeline):
+  """Extracts polyphonic tracks from a quantized NoteSequence."""
 
-  def __init__(self, config, name):
-    """Constructs an EncoderPipeline.
-
-    Args:
-      config: A MelodyRnnConfig that specifies the encoder/decoder, pitch range,
-          and what key to transpose into.
-      name: A unique pipeline name.
-    """
-    super(EncoderPipeline, self).__init__(
-        input_type=magenta.music.Melody,
-        output_type=tf.train.SequenceExample,
+  def __init__(self, min_steps, max_steps, name=None):
+    super(PolyphonicSequenceExtractor, self).__init__(
+        input_type=music_pb2.NoteSequence,
+        output_type=polyphony_lib.PolyphonicSequence,
         name=name)
-    self._melody_encoder_decoder = config.encoder_decoder
-    self._min_note = config.min_note
-    self._max_note = config.max_note
-    self._transpose_to_key = config.transpose_to_key
+    self._min_steps = min_steps
+    self._max_steps = max_steps
 
-  def transform(self, melody):
-    melody.squash(
-        self._min_note,
-        self._max_note,
-        self._transpose_to_key)
-    encoded = self._melody_encoder_decoder.encode(melody)
-    return [encoded]
+  def transform(self, quantized_sequence):
+    poly_seqs, stats = polyphony_lib.extract_polyphonic_sequences(
+        quantized_sequence,
+        min_steps_discard=self._min_steps,
+        max_steps_discard=self._max_steps)
+    self._set_stats(stats)
+    return poly_seqs
 
 
-def get_pipeline(config, eval_ratio):
+def get_pipeline(config, min_steps, max_steps, eval_ratio):
   """Returns the Pipeline instance which creates the RNN dataset.
 
   Args:
-    config: A MelodyRnnConfig object.
+    config: An EventSequenceRnnConfig.
+    min_steps: Minimum number of steps for an extracted sequence.
+    max_steps: Maximum number of steps for an extracted sequence.
     eval_ratio: Fraction of input to set aside for evaluation set.
 
   Returns:
     A pipeline.Pipeline instance.
   """
+  # Transpose up to a major third in either direction.
+  # Because our current dataset is Bach chorales, transposing more than a major
+  # third in either direction probably doesn't makes sense (e.g., because it is
+  # likely to exceed normal singing range).
+  transposition_range = range(-4, 5)
+
   partitioner = pipelines_common.RandomPartition(
       music_pb2.NoteSequence,
-      ['eval_melodies', 'training_melodies'],
+      ['eval_poly_tracks', 'training_poly_tracks'],
       [eval_ratio])
   dag = {partitioner: dag_pipeline.DagInput(music_pb2.NoteSequence)}
 
@@ -104,17 +98,20 @@ def get_pipeline(config, eval_ratio):
         name='TimeChangeSplitter_' + mode)
     quantizer = note_sequence_pipelines.Quantizer(
         steps_per_quarter=config.steps_per_quarter, name='Quantizer_' + mode)
-    melody_extractor = melody_pipelines.MelodyExtractor(
-        min_bars=0, max_steps=512, min_unique_pitches=0,
-        gap_bars=1.0, ignore_polyphonic_notes=False,
-        name='MelodyExtractor_' + mode)
-    encoder_pipeline = EncoderPipeline(config, name='EncoderPipeline_' + mode)
+    transposition_pipeline = note_sequence_pipelines.TranspositionPipeline(
+        transposition_range, name='TranspositionPipeline_' + mode)
+    poly_extractor = PolyphonicSequenceExtractor(
+        min_steps=min_steps, max_steps=max_steps, name='PolyExtractor_' + mode)
+    encoder_pipeline = encoder_decoder.EncoderPipeline(
+        polyphony_lib.PolyphonicSequence, config.encoder_decoder,
+        name='EncoderPipeline_' + mode)
 
-    dag[time_change_splitter] = partitioner[mode + '_melodies']
+    dag[time_change_splitter] = partitioner[mode + '_poly_tracks']
     dag[quantizer] = time_change_splitter
-    dag[melody_extractor] = quantizer
-    dag[encoder_pipeline] = melody_extractor
-    dag[dag_pipeline.DagOutput(mode + '_melodies')] = encoder_pipeline
+    dag[transposition_pipeline] = quantizer
+    dag[poly_extractor] = transposition_pipeline
+    dag[encoder_pipeline] = poly_extractor
+    dag[dag_pipeline.DagOutput(mode + '_poly_tracks')] = encoder_pipeline
 
   return dag_pipeline.DAGPipeline(dag)
 
@@ -122,16 +119,18 @@ def get_pipeline(config, eval_ratio):
 def main(unused_argv):
   tf.logging.set_verbosity(FLAGS.log)
 
-  config = melody_rnn_config_flags.config_from_flags()
   pipeline_instance = get_pipeline(
-      config, FLAGS.eval_ratio)
+      min_steps=1,  # 5 measures
+      max_steps=512,
+      eval_ratio=FLAGS.eval_ratio,
+      config=polyphony_model.default_configs['polyphony'])
 
-  FLAGS.input = os.path.expanduser(FLAGS.input)
-  FLAGS.output_dir = os.path.expanduser(FLAGS.output_dir)
+  input_dir = os.path.expanduser(FLAGS.input)
+  output_dir = os.path.expanduser(FLAGS.output_dir)
   pipeline.run_pipeline_serial(
       pipeline_instance,
-      pipeline.tf_record_iterator(FLAGS.input, pipeline_instance.input_type),
-      FLAGS.output_dir)
+      pipeline.tf_record_iterator(input_dir, pipeline_instance.input_type),
+      output_dir)
 
 
 def console_entry_point():
