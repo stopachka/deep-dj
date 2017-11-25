@@ -5,7 +5,7 @@ melody_rnn_generate \
 --num_outputs=10 \
 --num_steps=100 \
 --hparams="batch_size=64,rnn_layer_sizes=[64,64]" \
---primer_midi=/home/carnd/deep-dj/magenta/data/midi/highbpm/Bpm98_E_TokyoZapp_pad1.mid
+--primer_melody="[60, -2, 60, -2, 67, -2, 67, -2]"
 
 
 # polyphony_rnn_generate \
